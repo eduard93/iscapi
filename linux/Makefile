@@ -10,7 +10,7 @@ ISC_INCLUDE=/opt/isc/ensemble/dev/cpp/include
 CFLAGS=-DUNIX -DHAVE_LIMITS_H -DHAVE_STDINT_H 	-I$(CSP_INCLUDE) -I$(CSP_INCLUDE)/cpcsp \
 						-I$(CSP_INCLUDE)/asn1c/rtsrc -I$(CSP_INCLUDE)/asn1data \
 						-I$(ISC_INCLUDE) \
-						-DSIZEOF_VOID_P=8 -fPIC -g
+						-DSIZEOF_VOID_P=8 -fPIC -g -Wall
 						
 
 LDFLAGS= -L$(CSP_LIB) -lssp -lcapi10 -lcapi20 -lpthread -fPIC -g

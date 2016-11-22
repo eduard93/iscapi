@@ -6,7 +6,7 @@
 #endif
 
 static HCRYPTPROV hProv = NULL;
-static HCRYPTKEY hKey = NULL, hPublicKey = NULL;
+static HCRYPTKEY hKey = NULL;
 static HCRYPTHASH hHash = NULL;
 static HCRYPTKEY hSessionKey = NULL;
 static HCRYPTKEY hAgreeKey = NULL;
@@ -52,11 +52,8 @@ int internalInit(DWORD provTypeId, DWORD algId, char *containerName, char *pin, 
 
 void internalReleaseContext() {
 	LogMessage("Releasing context...");
-	if (hProv) {
-		CryptReleaseContext(hProv, 0);
-	}
+	if (hProv) CryptReleaseContext(hProv, 0);
 	hProv = 0;
-	//logLastError();
 }
 
 HCRYPTPROV internalAcquireContext() {
@@ -86,8 +83,6 @@ HCRYPTPROV internalAcquireContext() {
 	else {
 		if(TRUE == (result = CryptAcquireContext(&hProv, globalContainerName, NULL /* SHOULD be nULL for linux capilite! */, globalProviderID, dwFlags /* | CRYPT_SILENT */))) {
 			if (globalPIN) {
-				//pin = (char *)LocalAlloc(LMEM_ZEROINIT, strlen(globalPIN)+1);
-				//wcstombs(pin, globalPIN, wcslen(globalPIN)+1);
 				LogMessageFormat("Setting PP_SIGNATURE_PIN=%s", globalPIN);
 				if (TRUE == CryptSetProvParam(hProv, PP_SIGNATURE_PIN, (LPBYTE)globalPIN, 0)) {
 				    LogMessage("PP_SIGNATURE_PIN OK");
@@ -96,7 +91,6 @@ HCRYPTPROV internalAcquireContext() {
 				    LogError("ERROR while setting PP_SIGNATURE_PIN");
 				    return 0;
 				}
-				//LocalFree(pin);
 			}
 			LogMessageFormat("Context Acquired for ProviderType=%d, ProviderName=%s, Container=%s", globalProviderID, globalProviderName, globalContainerName);
 		}
@@ -560,6 +554,9 @@ int internalExportSessionKey(ZARRAYP publicKeyBlob, ZARRAYP encryptedSessionKey)
 		LocalFree(pbBlob);
 		return 1;
 	}
+	else {
+		LogMessage("+ CryptImportKey");
+	}
 	LocalFree(pbBlob);
 	
 	// Получение размера массива, используемого для экспорта ключа
@@ -575,11 +572,11 @@ int internalExportSessionKey(ZARRAYP publicKeyBlob, ZARRAYP encryptedSessionKey)
  	if (!CryptExportKey(hSessionKey, hAgreeKey, SIMPLEBLOB, 0, pbData, &count)) { 
 		LogError("CryptExportKey");
 		LocalFree(pbData);
-    		return 1;
-    	}
+		return 1;
+	}
 
-        ByteToZARRAY(count, pbData, encryptedSessionKey);
-        LocalFree(pbData);
+	ByteToZARRAY(count, pbData, encryptedSessionKey);
+	LocalFree(pbData);
 	if (hSessionKey) CryptDestroyKey(hSessionKey);
 	if (hAgreeKey) CryptDestroyKey(hAgreeKey);
 	
@@ -589,31 +586,43 @@ int internalExportSessionKey(ZARRAYP publicKeyBlob, ZARRAYP encryptedSessionKey)
 
 int internalDecryptData(ZARRAYP encryptedData, ZARRAYP encryptedSessionKey, ZARRAYP senderPublicKeyBlob, ZARRAYP decryptedData) {
 	
-	PBYTE pbBlob;
+	BYTE pbData[32000];
+	DWORD len;
 	
 	// Получение ключа для расшифровки сессионых ключей
-	CryptDestroyKey(hKey);
+	if (hKey) CryptDestroyKey(hKey);
 	if (!CryptGetUserKey(hProv, AT_KEYEXCHANGE, &hKey)) {
 		LogError("CryptGetUserKey");
 		return 1;
 	}
+	LogMessage("Private exchange key loaded");
 
 	// Получение ключа согласования импортом открытого ключа отправителя на закрытом ключе получателя.
-	
+	if (hAgreeKey) CryptDestroyKey(hAgreeKey);
 	if(!CryptImportKey(hProv, senderPublicKeyBlob->data, senderPublicKeyBlob->len, hKey, 0, &hAgreeKey)) {
-		LogError("CryptImportKey");
+		LogError("CryptImportKey: hAgreeKey");
+		return 1;
+	}
+	LogMessage("hAgreeKey imported");
+
+	// Получение сессионного ключа импортом зашифрованного сессионного ключа на ключе Agree.
+	if (hSessionKey) CryptDestroyKey(hSessionKey);
+	if(!CryptImportKey(hProv, encryptedSessionKey->data, encryptedSessionKey->len, hAgreeKey, 0, &hSessionKey)) {
+		LogError("CryptImportKey: hSessionKey");
 		return 1;
 	}
 	
-
-	/*
-	// Импорт сессионного ключа
-	CryptDestroyKey(hSessionKey);
-	if(!CryptImportKey(hProv, encryptedSessionKey->data, encryptedSessionKey->len, hKey, 0, &hSessionKey)) {
-  		LogError("CryptImportKey");
-  		return 1;
-  	}
-  	*/
+	// Расшифровка данных
+	memcpy(pbData, encryptedData->data, encryptedData->len);
+	len = encryptedData->len;
+	if(!CryptDecrypt(hSessionKey, 0, TRUE, 0, pbData, &len)) {
+		LogError("CryptDecrypt");
+	}
+	LogMessageFormat("Decrypted length = %d", len);
+	LogMessageFormat("Decrypted data = %s", pbData);
+	
+	// Возвращаем результат
+	ByteToZARRAY(len, pbData, decryptedData);
   	
   	return 0;
 

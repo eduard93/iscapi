@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="Cache" version="25" zv="Cache for UNIX (Red Hat Enterprise Linux for x86-64) 2016.1 (Build 646U)" ts="2016-11-20 08:45:46">
+<Export generator="Cache" version="25" zv="Cache for UNIX (Red Hat Enterprise Linux for x86-64) 2016.1 (Build 646U)" ts="2016-11-22 11:34:57">
 <Class name="iscapi.Signer">
 <Description>
 Функции для работы с крипто-провайдерами через интерфейс MSCAPI или его аналог
 Тестировалось на CryptoPro-CAPILite</Description>
 <Super>%RegisteredObject</Super>
-<TimeChanged>64241,56924.555386</TimeChanged>
+<TimeChanged>64243,55955.240708</TimeChanged>
 <TimeCreated>62647,62739.879273</TimeCreated>
 
 <Method name="LoadDLL">
@@ -313,12 +313,12 @@
 
 <Method name="DecryptData">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>encryptedData:%String,encryptedSessionKey:%String</FormalSpec>
+<FormalSpec>encryptedData:%String,encryptedSessionKey:%String,senderPublicKeyBlob:%String</FormalSpec>
 <ReturnType>%String</ReturnType>
 <Implementation><![CDATA[
 	s result = ""
 	try {
-		s result = $zf(-3, "", "DecryptData", encryptedData, encryptedSessionKey)
+		s result = $zf(-3, "", "DecryptData", encryptedData, encryptedSessionKey, senderPublicKeyBlob)
 	}
 	catch ex {
 		s result = ""
@@ -363,7 +363,8 @@ TODO: rewrite</Description>
 <Method name="TestCP">
 <Description>
 Тестовый прогон КриптоПро
-Updated TDA-2016-11-07 For ExportCertificate</Description>
+Updated TDA-2016-11-07 For ExportCertificate
+d ##class(iscapi.Signer).TestCP()</Description>
 <ClassMethod>1</ClassMethod>
 <Implementation><![CDATA[
 	//s data = "<Body>"
@@ -403,6 +404,7 @@ Updated TDA-2016-11-07 For ExportCertificate</Description>
 	s vfy = ..VerifyHashByKey(hash, sign, userKey)
 	w "Verifying Hash signature ByKey result = ", vfy, !!
 	
+	/*
 	s encryptedData = ..EncryptData(data)
 	w "EncryptedData = ", ..ByteToHex(encryptedData), !!
 	
@@ -411,7 +413,7 @@ Updated TDA-2016-11-07 For ExportCertificate</Description>
 	
 	s decryptedData = ..DecryptData(encryptedData, sessionKey)
 	w "DecryptedData = ", decryptedData, !!
-	
+	*/
 	d ..Release()
 ]]></Implementation>
 </Method>
@@ -430,19 +432,23 @@ Updated TDA-2016-11-07 For ExportCertificate</Description>
 	d ..LoadDLL("/opt/iscapi/iscapi.so")
 	d ..InitLogger("/tmp/iscapi-esia.log", 2, 3)
 	d ..Init(75, 32798, "\\.\HDIMAGE\ESIA-Sender", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+
+	s senderKey = ..ExportUserKey()
+	w "Sender Public Key = ", ..ByteToHex(senderKey), !!
 	
 	s f = ##class(%FileBinaryStream).%New()
-	s f.Filename = "/tmp/sender.pub"
-	s senderKey = f.Read()
-	w "Sender Key = ", ..ByteToHex(senderKey), !!
+	s f.Filename = "/tmp/receiver.pub"
+	s receiverKey = f.Read()
+	w "Receiver Public Key = ", ..ByteToHex(receiverKey), !!
 	
 	s encryptedData = ..EncryptData(data)
 	w "EncryptedData = ", ..ByteToHex(encryptedData), !!
 	
-	s sessionKey = ..ExportSessionKey(senderKey)
+	s sessionKey = ..ExportSessionKey(receiverKey)
 	w "Session Key = ", ..ByteToHex(sessionKey), !!
 	
 	d ..Release()
+	
 	
 	////// Переключаемся на сторону приложения-получателя (Receiver)
 	////// Это необходимо ввиду DH 
@@ -451,9 +457,14 @@ Updated TDA-2016-11-07 For ExportCertificate</Description>
 	d ..Init(75, 32798, "\\.\HDIMAGE\ESIA-Receiver", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
 
 	s receiverKey = ..ExportUserKey()
-	w "Receiver Key = ", ..ByteToHex(receiverKey), !!
+	w "Receiver Public Key = ", ..ByteToHex(receiverKey), !!
 	
-	s decryptedData = ..DecryptData(encryptedData, sessionKey)
+	s f = ##class(%FileBinaryStream).%New()
+	s f.Filename = "/tmp/sender.pub"
+	s senderKey = f.Read()
+	w "Sender Public Key = ", ..ByteToHex(senderKey), !!
+
+	s decryptedData = ..DecryptData(encryptedData, sessionKey, senderKey)
 	w "DecryptedData = ", decryptedData, !!
 	
 	d ..Release()
