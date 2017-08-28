@@ -53,5 +53,8 @@ void ReverseByteToZARRAY(int len, unsigned char *buf, ZARRAYP bytestr);
 //HCRYPTPROV fullAC(DWORD provType);
 //void simpleRC(HCRYPTPROV hCryptProv);
 
+#define CMS_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
+
+
 
 

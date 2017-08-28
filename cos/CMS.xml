@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for UNIX (Red Hat Enterprise Linux for x86-64) 2016.1 (Build 646U)" ts="2017-08-28 18:18:29">
+<Class name="iscapi.CMS">
+<Description>
+Cryptographic Message Syntax через ISCAPI
+TODO: Убрать наследование, вынести методы в Abstract</Description>
+<Super>iscapi.Signer</Super>
+<TimeChanged>64476,48538.730967</TimeChanged>
+<TimeCreated>64370,67036.596</TimeCreated>
+
+<Method name="TestDecrypt">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>p7bytes:%String=""</FormalSpec>
+<Implementation><![CDATA[
+	d ..LoadDLL("/opt/iscapi.dev/iscapi.so")
+	d ..InitLogger("/tmp/iscapiCMS-decrypt-01.log", 2, 3)
+	
+	d ..Init(75, 32798, "\\.\HDIMAGE\CMS-Test-01", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	
+	// статичный файл для тестирования
+	s file = ##class(%Stream.FileBinary).%New()
+	//d file.LinkToFile("/opt/isc/files/sign_customer.p7z")
+	d file.LinkToFile("/opt/isc/files/sign_supplier.p7z")
+
+	s p7bytes = file.Read()
+	
+	w ..CertOpenStore(), !
+	
+	
+	d ..Release()
+]]></Implementation>
+</Method>
+
+<Method name="CertOpenStore">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>p7bytes:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = $$$NULLOREF
+	try {
+		s result = $zf(-3, "", "CertOpenStore", p7bytes)
+	}
+	catch ex {
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="TestCMS">
+<Description>
+Тест CMS
+w ##class(iscapi.CMS).TestCMS()</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>p7bytes:%String="",verbose:%Boolean=$$$YES</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+
+	d ..LoadDLL("/opt/iscapi/iscapi.so")
+	d ..InitLogger("/tmp/iscapiCMS-migration-03.log", 2, 3)
+	
+	d ..Init(75, 32798, "\\.\HDIMAGE\CMS-Test-01", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	
+	// статичный файл для тестирования
+	s file = ##class(%Stream.FileBinary).%New()
+	d file.LinkToFile("/opt/isc/files/sign_customer.p7z")
+	//d file.LinkToFile("/opt/isc/files/sign_supplier.p7z")
+
+	s p7bytes = file.Read()
+	
+	
+	//w ..DecryptMessage(p7bytes)
+	
+	// Создаем хранилище (в памяти)
+	w:verbose "Creating & Opening PKCS7 CertStore... " 
+	s sc = ..CertOpenStore7(p7bytes)
+	w:verbose $select(sc=0:"OK", 1:"Error"), !
+	
+	set str = ""
+	
+	// Обходим сертификаты в хранилище
+	s i = 0
+	while (..CertEnumCertificatesInStore7()) {
+		i $i(i)
+		
+		set issuer =  ..CertGetInfoIssuer()
+		set name =  ..CertGetInfoName()
+		set notBefore = ..CertGetInfoNotBefore()
+		set notAfter = ..CertGetInfoNotAfter()
+		if verbose {
+			w !, "Сертификат #", i, !
+			w $c(9), "Issuer: ", issuer, !	
+			w $c(9), "Name: ", name, !	
+			w $c(9), "NotBefore: ", notBefore, !	
+			w $c(9), "NotAfter: ", notAfter, !	
+		}
+		
+		set str = str _ "Сертификат #" _ i _ $$$NL _ "Issuer: " _ issuer _ $$$NL _ "Name: " _ name	_ $$$NL _ "NotBefore: " _ notBefore _ $$$NL _ "NotAfter: "  _ notAfter _ $$$NL
+	}
+	
+	// Закрываем хранилище (освобождаем ресурсы)
+	w:verbose !, "Closing CertStore..."
+	s sc = ..CertCloseStore7()
+	w:verbose $select(sc=0:"OK", 1:"Error"), !
+
+	d ..Release()
+	quit str
+]]></Implementation>
+</Method>
+
+<Method name="CertGetInfoNotBefore">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "CertGetInfoNotBefore")
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CertGetInfoNotAfter">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "CertGetInfoNotAfter")
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CertGetInfoIssuer">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "CertGetInfoIssuer")
+	}
+	catch ex {
+		s result = ""
+	}
+	q $zcvt(result, "I", "CP1251")
+]]></Implementation>
+</Method>
+
+<Method name="CertGetInfoName">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "CertGetInfoName")
+	}
+	catch ex {
+		s result = ""
+	}
+	q $zcvt(result, "I", "CP1251")
+]]></Implementation>
+</Method>
+
+<Method name="CertGetInfoSerialNumber">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "CertGetInfoSerialNumber")
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CertEnumCertificatesInStore7">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Boolean</ReturnType>
+<Implementation><![CDATA[
+	s result = $$$NULLOREF
+	try {
+		s result = $zf(-3, "", "CertEnumCertificatesInStore")
+	}
+	catch ex {
+		s result = $$$NULLOREF
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CertOpenStore7">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>p7bytes:%String</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	s result = $$$OK
+	try {
+		s result = $zf(-3, "", "CertOpenStore7", p7bytes)
+	}
+	catch ex {
+		s result = $$$NO
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CertCloseStore7">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	s result = $$$OK
+	try {
+		s result = $zf(-3, "", "CertCloseStore7")
+	}
+	catch ex {
+		s result = $$$NO
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="DecryptMessage">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>p7bytes:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "DecryptMessage", p7bytes)
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="GetFileHash">
+<Description>
+Тест CMS
+do ##class(iscapi.CMS).GetFileHash()</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>fileName:%String="/opt/isc/files/1.zip"</FormalSpec>
+<Implementation><![CDATA[
+	//set key = $i(^CacheTemp.dbg) 
+	//set ^CacheTemp.dbg(key) = 1
+	s sc = ..LoadDLL("/opt/iscapi/iscapi.so")
+	//set ^CacheTemp.dbg(key, 2) = $System.Status.GetErrorText(sc)
+	s sc = ..InitLogger("/tmp/iscapiCMS-cacheusr-01.log", 2, 3)
+	//set ^CacheTemp.dbg(key, 3) = $System.Status.GetErrorText(sc)
+	
+	try {
+		s sc = ..Init(75, 32798, "\\.\HDIMAGE\CMS-Test-01", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	}
+	catch (ex) {
+		s sc = ex.AsStatus()	
+	}
+	//set ^CacheTemp.dbg(key, 4) = $System.Status.GetErrorText(sc)
+		
+	set file = ##class(%Stream.FileBinary).%New()
+	do file.LinkToFile(fileName)
+	
+	while 'file.AtEnd {
+		d ..HashData(file.Read())
+	}
+	s hash = ..GetHashValue()
+	w "Hash received, hash length=", $l(hash), !
+	w "Hash to base64:", !, $system.Encryption.Base64Encode(hash), !
+	w "Hash to HEX:", !, ..ByteToHex(hash), !
+	
+	set hex =  ..ByteToHex(hash)
+	set hex = $zcvt(hex, "l")
+	s sc = ..Release()
+	//set ^CacheTemp.dbg(key, 5) = $System.Status.GetErrorText(sc)
+	
+	quit hex
+]]></Implementation>
+</Method>
+
+<Method name="GetStreamHash">
+<Description>
+do ##class(iscapi.CMS).GetStreamHash()</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>stream:%Stream.Object</FormalSpec>
+<Implementation><![CDATA[
+	//set key = $i(^CacheTemp.dbg) 
+	//set ^CacheTemp.dbg(key) = 1
+	s sc = ..LoadDLL("/opt/iscapi/iscapi.so")
+	//set ^CacheTemp.dbg(key, 2) = $System.Status.GetErrorText(sc)
+	d ..InitLogger("/tmp/iscapiCMS-02.log", 2, 3)
+	
+	d ..Init(75, 32798, "\\.\HDIMAGE\CMS-Test-01", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	
+	d stream.Rewind()
+	while 'stream.AtEnd {
+		d ..HashData(stream.Read())
+	}
+	s hash = ..GetHashValue()
+	//w "Hash received, hash length=", $l(hash), !
+	//w "Hash to base64:", !, $system.Encryption.Base64Encode(hash), !
+	//w "Hash to HEX:", !, ..ByteToHex(hash), !
+	set hex =  ..ByteToHex(hash)
+	set hex = $zcvt(hex, "l")
+	d ..Release()
+	
+	quit hex
+]]></Implementation>
+</Method>
+</Class>
+</Export>

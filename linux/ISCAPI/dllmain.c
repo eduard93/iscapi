@@ -11,6 +11,12 @@ static HCRYPTHASH hHash = NULL;
 static HCRYPTKEY hSessionKey = NULL;
 static HCRYPTKEY hAgreeKey = NULL;
 
+// --- нужно уже вытащить через указатели в Cache
+static HCERTSTORE hStoreHandle = 0;
+static HCERTSTORE hSystemStore = 0;
+static PCCERT_CONTEXT pCertContext = NULL;//, pPrevCertContext = NULL, pNextCertContext = NULL;
+// ---
+
 DWORD globalProviderID = 0;
 DWORD globalHashAlgID = 0;
 DWORD globalSignAlgID = 0;
@@ -642,6 +648,216 @@ int internalInitLogger(char* logFileName, int logLevel, int logTargets) {
 	return 0;
 }
 
+
+/*************** CMS *******************/
+
+int internalCertOpenStore(ZARRAYP p7bytes, HCERTSTORE hStore) {
+
+	CRYPT_DATA_BLOB   p7message;
+	
+	hStore = 0;
+	
+	// Инициализация структуры
+	p7message.cbData = p7bytes->len;
+	p7message.pbData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, p7bytes->len);
+	memcpy(p7message.pbData, p7bytes->data, p7bytes->len);
+	
+	// Открываем хранилище
+	hStore = CertOpenStore(CERT_STORE_PROV_PKCS7, CMS_ENCODING_TYPE, 0, 0, &p7message);
+	if (hStore) {
+		LogMessage("PKCS7 Store opened");
+	}
+	else {
+		LocalFree(p7message.pbData);
+		LogError("Error opening PKCS7 Store");
+		return ZF_FAILURE;
+	}
+	
+	LocalFree(p7message.pbData);
+	
+	return ZF_SUCCESS;
+}
+
+
+
+int internalCertOpenStore7(ZARRAYP p7bytes) {
+
+	CRYPT_DATA_BLOB   p7message;
+	
+	// Инициализация структуры
+	p7message.cbData = p7bytes->len;
+	p7message.pbData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, p7bytes->len);
+	memcpy(p7message.pbData, p7bytes->data, p7bytes->len);
+	
+	// Открываем хранилище
+	hSystemStore = CertOpenStore(CERT_STORE_PROV_PKCS7, CMS_ENCODING_TYPE, 0, 0, &p7message);
+	if (hSystemStore) {
+		LogMessage("PKCS7 Store opened");
+	}
+	else {
+		LocalFree(p7message.pbData);
+		LogError("Error opening PKCS7 Store");
+		return 1;
+	}
+	
+	LocalFree(p7message.pbData);
+
+	return 0;
+}
+
+int internalCertCloseStore7() {
+	if (CertCloseStore(hSystemStore, 0)) {
+		LogMessage("PKCS7 Store is closed.");
+		return 1;
+	}
+	else {
+		LogError("PKCS7 Store cannot be closed");
+	}
+
+	return 0;
+}
+
+
+int internalCertEnumCertificatesInStore(int *IsMoreData) {
+
+	*IsMoreData = 1;
+	LogMessageFormat("PrevCertContext = %p", pCertContext);
+	pCertContext = CertEnumCertificatesInStore(hSystemStore, pCertContext);
+	//pPrevCertContext = pNextCertContext;
+	LogMessageFormat("pNextCertContext = %p", pCertContext);
+	if (!pCertContext) *IsMoreData = 0;
+	return 0;
+	
+}
+
+int internalCertGetInfoSerialNumber(ZARRAYP blob) {
+	ByteToZARRAY(pCertContext->pCertInfo->SerialNumber.cbData, pCertContext->pCertInfo->SerialNumber.pbData, blob);
+	return 0;
+	
+}
+
+// TO_RE_DO!!!
+int internalCertGetInfoNotBefore(ZARRAYP string) {
+	SYSTEMTIME stUTC;
+	BYTE buffer[1024];
+	FileTimeToSystemTime(&pCertContext->pCertInfo->NotBefore, &stUTC);
+	sprintf((char *)buffer, "%02d/%02d/%d  %02d:%02d", stUTC.wMonth, stUTC.wDay, stUTC.wYear, stUTC.wHour, stUTC.wMinute);
+	ByteToZARRAY(strlen((char *)buffer), buffer, string);
+	return 0;
+}
+
+
+int internalCertGetInfoNotAfter(ZARRAYP string) {
+	SYSTEMTIME stUTC;
+	BYTE buffer[1024];
+	FileTimeToSystemTime(&pCertContext->pCertInfo->NotAfter, &stUTC);
+	sprintf((char *)buffer, "%02d/%02d/%d  %02d:%02d", stUTC.wMonth, stUTC.wDay, stUTC.wYear, stUTC.wHour, stUTC.wMinute);
+	ByteToZARRAY(strlen((char *)buffer), buffer, string);
+	return 0;
+}
+
+
+int internalCertGetInfoIssuer(ZARRAYP blob) {
+	DWORD cbSize;
+	PBYTE pszName;
+	if(!(cbSize = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_NAME_ISSUER_FLAG, NULL, NULL, 0))) {
+		LogError("CertGetName 1 failed.");
+		return 1;
+	}
+	
+	pszName = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbSize * sizeof(TCHAR));
+	if(CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_NAME_ISSUER_FLAG, NULL, (LPSTR)pszName, cbSize)) {
+		ByteToZARRAY(cbSize * sizeof(TCHAR), pszName, blob);
+	}
+	else {
+		LocalFree(pszName);
+		LogError("CertGetName 1 failed.");
+		return 1;
+	}
+	LocalFree(pszName);
+	
+	return 0;
+	
+}
+
+int internalCertGetInfoName(ZARRAYP blob) {
+	DWORD cbSize;
+	PBYTE pszName;
+	if(!(cbSize = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, NULL, 0))) {
+		LogError("CertGetName 2 failed.");
+		return 1;
+	}
+	
+	pszName = (BYTE*)LocalAlloc(LMEM_ZEROINIT, cbSize * sizeof(TCHAR));
+	if(CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, (LPSTR)pszName, cbSize)) {
+		ByteToZARRAY(cbSize * sizeof(TCHAR), pszName, blob);
+	}
+	else {
+		LocalFree(pszName);
+		LogError("CertGetName 2 failed.");
+		return 1;
+	}
+	LocalFree(pszName);
+	
+	return 0;
+}
+
+int internalCertGetInfoIssuerRAW(ZARRAYP blob) {
+	//DWORD cbSize;
+	ByteToZARRAY(pCertContext->pCertInfo->Issuer.cbData, pCertContext->pCertInfo->Issuer.pbData, blob);
+	return 0;
+	
+}
+
+
+int internalDecryptMessage(ZARRAYP p7bytes, ZARRAYP decryptedMessage) {
+	DWORD cbDecryptedMessage;
+
+	CRYPT_DECRYPT_MESSAGE_PARA  decryptParams;
+	//BYTE*  pbDecryptedMessage = NULL;
+
+
+	// Открытие системного хранилища сертификатов.
+	hStoreHandle = CertOpenSystemStore(hProv, "root");
+	if(!hStoreHandle) {
+		LogError("Error getting store handle.");
+		return 1;
+	}
+        LogMessage("The store opened.");
+        
+	// Инициализация структуры CRYPT_DECRYPT_MESSAGE_PARA.
+	memset(&decryptParams, 0, sizeof(CRYPT_DECRYPT_MESSAGE_PARA));
+	decryptParams.cbSize = sizeof(CRYPT_DECRYPT_MESSAGE_PARA);
+	decryptParams.dwMsgAndCertEncodingType = CMS_ENCODING_TYPE;
+	decryptParams.cCertStore = 1;
+	decryptParams.rghCertStore = &hStoreHandle;
+	
+	//  Расшифрование сообщения
+	
+	LogMessageFormat("encryptedDataLen  = %d", p7bytes->len);
+	
+	
+	//  Вызов фнукции CryptDecryptMessage для получения возвращаемого размера данных.
+	if(!CryptDecryptMessage(
+		&decryptParams,
+		p7bytes->data,
+		p7bytes->len,
+		NULL,
+		&cbDecryptedMessage,
+		NULL)) {
+		
+		LogError( "Error getting decrypted message size");
+		return 1;
+	}
+	LogMessageFormat("The size for the decrypted message is: %d.", cbDecryptedMessage);
+
+	return 0;
+}
+
+
+
+
+
 ZFBEGIN
 	ZFENTRY("Init", "iiccc", internalInit)
 	ZFENTRY("InitLogger", "cii", internalInitLogger)
@@ -658,6 +874,18 @@ ZFBEGIN
 	ZFENTRY("DecryptData", "bbbB", internalDecryptData)
 	ZFENTRY("LogMessage", "w", LogMessageCOS)
 	ZFENTRY("Release", "", internalReleaseAll)
+	
+	ZFENTRY("CertOpenStore7", "b", internalCertOpenStore7)
+	ZFENTRY("CertOpenStore", "bP", internalCertOpenStore)
+	ZFENTRY("CertCloseStore7", "", internalCertCloseStore7)
+	ZFENTRY("DecryptMessage", "bB", internalDecryptMessage)
+	ZFENTRY("CertEnumCertificatesInStore", "P", internalCertEnumCertificatesInStore)
+	ZFENTRY("CertGetInfoSerialNumber", "B", internalCertGetInfoSerialNumber)
+	ZFENTRY("CertGetInfoIssuer", "B", internalCertGetInfoIssuer)
+	ZFENTRY("CertGetInfoName", "B", internalCertGetInfoName)
+	ZFENTRY("CertGetInfoNotBefore", "B", internalCertGetInfoNotBefore)
+	ZFENTRY("CertGetInfoNotAfter", "B", internalCertGetInfoNotAfter)
+	
 ZFEND
 
 //ZFENTRY("SetLogFileName", "w", setLogFileName)
