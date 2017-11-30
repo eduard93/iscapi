@@ -373,7 +373,7 @@ d ##class(iscapi.Signer).TestCP()</Description>
 	d ..LoadDLL("/opt/iscapi/iscapi.so")
 	d ..InitLogger("/tmp/iscapiCP-7.log", 2, 3)
 	
-	d ..Init(75, 32798, "\\.\HDIMAGE\MVK-Test-07", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	d ..Init(75, 32798, "\\.\HDIMAGE\Test-07", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
 		
 	d ..HashData(data)
 	s hash = ..GetHashValue()

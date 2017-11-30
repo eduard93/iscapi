@@ -14,6 +14,7 @@ static HCRYPTKEY hAgreeKey = NULL;
 // --- нужно уже вытащить через указатели в Cache
 static HCERTSTORE hStoreHandle = 0;
 static HCERTSTORE hSystemStore = 0;
+static HCERTSTORE hCertStore = 0;
 static PCCERT_CONTEXT pCertContext = NULL;//, pPrevCertContext = NULL, pNextCertContext = NULL;
 // ---
 
@@ -57,9 +58,13 @@ int internalInit(DWORD provTypeId, DWORD algId, char *containerName, char *pin, 
 }
 
 void internalReleaseContext() {
-	LogMessage("Releasing context...");
+	commonFree(); //- As of 2017-10-23
+	
+	LogMessage("Releasing CryptoProvider context...");
 	if (hProv) CryptReleaseContext(hProv, 0);
 	hProv = 0;
+	LogMessage("CryptoProvider Context is released and no more accessible.");
+	
 }
 
 HCRYPTPROV internalAcquireContext() {
@@ -823,7 +828,7 @@ int internalDecryptMessage(ZARRAYP p7bytes, ZARRAYP decryptedMessage) {
 		LogError("Error getting store handle.");
 		return 1;
 	}
-        LogMessage("The store opened.");
+	LogMessage("The store opened.");
         
 	// Инициализация структуры CRYPT_DECRYPT_MESSAGE_PARA.
 	memset(&decryptParams, 0, sizeof(CRYPT_DECRYPT_MESSAGE_PARA));
@@ -855,8 +860,395 @@ int internalDecryptMessage(ZARRAYP p7bytes, ZARRAYP decryptedMessage) {
 }
 
 
+void commonPrintCertInfo(PCCERT_CONTEXT pCertCtx) { 
+	TCHAR 		szNameString[256];
+	SYSTEMTIME	ExpireDate;
+
+	LogMessage ("Certificate Info:");
+	
+	// CN
+	if (CertGetNameString(pCertCtx, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, szNameString, 128)) {
+		LogMessageFormat("\tIssued for:\t%s", szNameString);
+	}
+	
+	// Issuer name
+	if (CertGetNameString(pCertCtx, CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_NAME_ISSUER_FLAG, NULL, szNameString, 128)) {
+		LogMessageFormat("\tIssued by:\t%s", szNameString);
+	}
+	
+	// Дата устаревания
+	FileTimeToSystemTime(&pCertCtx->pCertInfo->NotAfter, &ExpireDate);
+	LogMessageFormat("\tExpires:\t%02d.%02d.%04d %02d:%02d:%02d", ExpireDate.wDay, ExpireDate.wMonth, ExpireDate.wYear, ExpireDate.wHour, ExpireDate.wMinute, ExpireDate.wSecond);
+}
 
 
+// Выбор OID алгоритма 
+char* commonGetHashOidByKeyOid(IN char *szKeyOid) {
+	LogMessageFormat ("Searching for OID = %s", szKeyOid);
+	if (strcmp(szKeyOid, szOID_CP_GOST_R3410EL) == 0) {
+		return szOID_CP_GOST_R3411;
+	}
+	else if (strcmp(szKeyOid, szOID_CP_GOST_R3410_12_256) == 0) {
+		return szOID_CP_GOST_R3411_12_256;
+	}
+	else if (strcmp(szKeyOid, szOID_CP_GOST_R3410_12_512) == 0) {
+		return szOID_CP_GOST_R3411_12_512;
+	}
+	
+	return NULL;
+}
+
+
+// ONLY FOR ZF_FAILURE CASE
+void commonFree() {
+	LogMessage("Freeing resources...");
+	if (pCertContext) {
+		CertFreeCertificateContext(pCertContext);
+		pCertContext = NULL;
+		LogMessage("\tpCertContext released");
+	}
+	if (hCertStore) {
+		CertCloseStore(hCertStore, 0);
+		hCertStore = NULL;
+		LogMessage("\thCertStore released. Any kind of other contexts (including hProvider) may become inaccessible.");
+	}
+	LogMessage("Resources freed.");
+}
+
+
+void commonDumpB2F(BYTE *str, size_t size) {
+
+	FILE *tmpFile;
+	char fName[32] = "/tmp/sigDebug.XXXXXX"; 
+	
+	mktemp(fName);
+	LogMessageFormat("TEMP Binary Log FileName = %s", fName);
+	tmpFile = fopen(fName, "w");
+	fwrite(str, size, 1, tmpFile);
+	fclose(tmpFile);
+}
+
+
+BOOL commonGetFileData(IN TCHAR *szFile, OUT DWORD *pdwDataSize, OUT BYTE *pbData) {
+	FILE *pFile = NULL;
+	DWORD dwFileSize = 0;
+
+	LogMessageFormat("Reading file: %s", szFile);
+		
+	// Open file
+	pFile = _tfopen(szFile, _TEXT("rb"));
+	if (pFile == NULL) {
+		switch(errno) {
+			case EACCES:
+				SetLastError(ERROR_ACCESS_DENIED);
+				break;
+			case ENOENT:
+				SetLastError(ERROR_FILE_NOT_FOUND);
+				break;
+			default:
+				SetLastError(ERROR_FUNCTION_FAILED);
+		}
+		if (pFile) fclose(pFile);
+	}
+
+	// Get file size
+	fseek(pFile, 0, SEEK_END);
+	dwFileSize = ftell(pFile);
+	if (pbData == NULL) {
+		*pdwDataSize = dwFileSize;
+		if (pFile) fclose(pFile);
+		return TRUE;
+	}
+	
+	if (*pdwDataSize < dwFileSize) {
+		*pdwDataSize = dwFileSize;
+		SetLastError (ERROR_MORE_DATA);
+		return FALSE;
+	}
+	
+	*pdwDataSize = dwFileSize;
+	fseek(pFile, 0, SEEK_SET);
+	fread(pbData, *pdwDataSize, 1, pFile);
+	
+	return TRUE;
+}
+
+                                                                                    
+
+// Упрощёнка.
+// Подпись сообщения (откреплённая)
+int internalSignMessage(ZWARRAYP certCN, char *szFile, ZARRAYP zpSignature) {
+	
+	CRYPT_SIGN_MESSAGE_PARA stSignMessagePara;
+	DWORD MessageSizeArray[1];
+	const BYTE *MessageArray[1];
+	DWORD dwSignatureSize = 0;
+	BYTE *pbSignatureData = NULL;
+	
+	DWORD dwDataSize = 0;
+	BYTE *pbData = NULL;	
+	
+	/*
+	if (CryptGetUserKey(hProv, AT_KEYEXCHANGE, &hKey)) {
+	
+		LogMessage("User Key Acquired");
+	}
+	else {
+		LogError("CryptGetUserKey Failed");
+		commonCleanAll();
+		return 1;
+	}
+	*/
+
+	//LogMessageFormat("Searching for CertCN = %s", certCN);
+	
+	//DWORD size = sizeof(hCertStore);
+	//b = CryptGetProvParam(hProv, PP_ROOT_CERTSTORE, (PBYTE)&hCertStore, &size, 0);
+	
+	//LogMessageFormat("Received certCN = %s, Len = %d", certCN->data, certCN->len);
+	//return 0;
+	
+	
+	//hCertStore = NULL;
+	if (!hCertStore) {
+		LogMessage("Opening CertStore");
+		hCertStore = CertOpenSystemStore(hProv, "MY");
+		if (!hCertStore) {
+			LogError("CertOpenSystemStore Failed");
+			return ZF_SUCCESS;
+		}
+		LogMessageFormat("CertStore opened. hCertStore = %p", hCertStore);
+	}
+	else {
+		LogMessageFormat("CertStore already opened. hCertStore = %p", hCertStore);
+	}
+	
+	
+	//return 0;
+	
+	//pCertContext = NULL;
+	//pCertContext = CertFindCertificateInStore(hCertStore, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_SUBJECT_STR, (void*) certCN->data, NULL);	
+
+	if (!pCertContext) {
+		LogMessage("Finding Certificate");
+		pCertContext = CertFindCertificateInStore(hCertStore, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_ANY, NULL, NULL);	
+		if (!pCertContext) {
+			LogError("CertFindCertificateInStore Failed");
+			commonFree();
+			return ZF_SUCCESS;
+		}
+		LogMessageFormat("CertContext loaded. pCertContext = %p", pCertContext);
+	}
+	else {
+		LogMessageFormat("CertContext already loaded. pCertContext = %p", pCertContext);
+	}
+	
+	commonPrintCertInfo(pCertContext);
+	
+	
+	// Verify certificate chain
+	//if (!VerifyCertificateChain(pCertCtx)) {
+	//	HandleError(_TEXT("Verifying '%s' certificate chain failed.\n"), szCertName);
+	//}
+	
+	// Fill CRYPT_SIGN_MESSAGE_PARA structure
+	ZeroMemory(&stSignMessagePara, sizeof(CRYPT_SIGN_MESSAGE_PARA));
+	stSignMessagePara.cbSize = sizeof(CRYPT_SIGN_MESSAGE_PARA);
+	stSignMessagePara.dwMsgEncodingType = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+	stSignMessagePara.pSigningCert = pCertContext;
+	stSignMessagePara.HashAlgorithm.pszObjId = commonGetHashOidByKeyOid(pCertContext->pCertInfo->SubjectPublicKeyInfo.Algorithm.pszObjId);
+	stSignMessagePara.rgpMsgCert = &pCertContext;
+	stSignMessagePara.cMsgCert = 1;
+
+	// Get file data
+	if (!commonGetFileData(szFile, &dwDataSize, NULL)) {
+		LogMessageFormat("Can't read file '%s'.", szFile);
+		return ZF_FAILURE;
+	}
+	
+	pbData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, dwDataSize * sizeof(BYTE));
+	
+	if (!commonGetFileData(szFile, &dwDataSize, pbData)) {
+		LogMessageFormat("Can't read file '%s'.", szFile);
+		LocalFree(pbData);
+		return ZF_FAILURE;
+	}
+
+	                           
+	// Fill Array of messages (for future use)
+	MessageArray[0] = pbData;
+	MessageSizeArray[0] = dwDataSize;	
+
+	// 1st iteration - size calc
+	if (CryptSignMessage(&stSignMessagePara, TRUE, 1, MessageArray, MessageSizeArray, NULL, &dwSignatureSize)) {
+		LogMessageFormat("Signature Size = %d Bytes (faked)", dwSignatureSize);
+	}
+	else {
+		LogError("SignatureSize failed");
+		commonFree();
+		//CACHEEXSTRKILL(exstrData);
+		return ZF_FAILURE;
+	}
+	
+	
+//	DWORD i = 32000;
+	pbSignatureData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, dwSignatureSize * sizeof(BYTE));
+//	pbSignatureData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, 32000);
+
+
+	if (CryptSignMessage(&stSignMessagePara, TRUE, 1, MessageArray, MessageSizeArray, pbSignatureData, &dwSignatureSize)) {
+		LogMessage("Message successfully signed");
+		//CACHEEXSTRKILL(exstrSignature);
+		//if (!CACHEEXSTRNEW(exstrSignature, dwSignatureSize * sizeof(BYTE))) {
+		//	LogError("Cannot allocate EXSTR");
+		//	LocalFree(pbSignatureData);
+			//CACHEEXSTRKILL(exstrData);
+		//	commonFree();
+		//	return ZF_FAILURE;
+		//}
+		
+		//ByteToEXSTR(dwSignatureSize, pbSignatureData, exstrSignature);
+		//memcpy(zapSignature->data, pbSignatureData, dwSignatureSize * sizeof(BYTE));
+		//commonDumpB2F(pbSignatureData, dwSignatureSize);
+		ByteToZARRAY(dwSignatureSize, pbSignatureData, zpSignature);
+	}
+	else {
+		LogError("ERROR while Signing message");
+		LocalFree(pbSignatureData);
+		//CACHEEXSTRKILL(exstrData);			
+		commonFree();
+		return ZF_FAILURE;
+	}
+	
+	LocalFree(pbSignatureData);
+	
+	// commonFree() destroys hProv also! 
+	//commonFree();
+	
+	
+	//CACHEEXSTRKILL(exstrData);			
+	return ZF_SUCCESS;
+
+}
+
+
+int internalVerifyMessageSignature(char *szFile, char *szSignature, int *result) {
+
+	CRYPT_VERIFY_MESSAGE_PARA stVerifyMessagePara;
+	DWORD MessageSizeArray[1];
+	const BYTE *MessageArray[1];
+	
+	PCCERT_CONTEXT pSignerCertContext = NULL;
+
+	DWORD dwDataSize = 0;
+	DWORD dwSignatureSize = 0;
+	BYTE *pbData = NULL;	
+	BYTE *pbSignature = NULL;	
+
+
+	*result = 0;
+	
+	// Заполняем структурки аккуратно
+	ZeroMemory(&stVerifyMessagePara, sizeof(CRYPT_VERIFY_MESSAGE_PARA));
+	stVerifyMessagePara.cbSize = sizeof(CRYPT_VERIFY_MESSAGE_PARA);
+	stVerifyMessagePara.dwMsgAndCertEncodingType = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+	stVerifyMessagePara.pfnGetSignerCertificate = NULL;
+	stVerifyMessagePara.pvGetArg = NULL;
+	
+	// Get file data
+	if (!commonGetFileData(szFile, &dwDataSize, NULL)) {
+		LogMessageFormat("Can't read file '%s'.", szFile);
+		return ZF_FAILURE;
+	}
+	
+	pbData = (BYTE*)LocalAlloc(LMEM_ZEROINIT, dwDataSize * sizeof(BYTE));
+	
+	if (!commonGetFileData(szFile, &dwDataSize, pbData)) {
+		LogMessageFormat("Can't read file '%s'.", szFile);
+		LocalFree(pbData);
+		return ZF_FAILURE;
+	}
+
+	// Get Signature data
+	if (!commonGetFileData(szSignature, &dwSignatureSize, NULL)) {
+		LogMessageFormat("Can't read file '%s'.", szSignature);
+		return ZF_FAILURE;
+	}
+	
+	pbSignature = (BYTE*)LocalAlloc(LMEM_ZEROINIT, dwSignatureSize * sizeof(BYTE));
+	
+	if (!commonGetFileData(szSignature, &dwSignatureSize, pbSignature)) {
+		LogMessageFormat("Can't read file '%s'.", szSignature);
+		LocalFree(pbSignature);
+		return ZF_FAILURE;
+	}
+
+
+	
+	MessageArray[0] = pbData;
+	MessageSizeArray[0] = dwDataSize;
+
+	
+	// Проверяем подпись
+	if (CryptVerifyDetachedMessageSignature(&stVerifyMessagePara, 0, pbSignature, dwSignatureSize, 1, MessageArray, MessageSizeArray, &pSignerCertContext)) {
+		LogMessage("Message Signature is OK");
+		commonPrintCertInfo(pSignerCertContext);
+		*result = 1;
+	}
+	else {
+		LogError("Message Signature is INVALID");
+		LocalFree(pbData);
+		LocalFree(pbSignature);
+		return ZF_FAILURE;
+	}
+
+	LocalFree(pbData);
+	LocalFree(pbSignature);
+	return ZF_SUCCESS;
+}
+/*
+int internalVerifyMessageSignature(CACHE_EXSTRP exstrData, CACHE_EXSTRP exstrSignature, int *result) {
+
+	CRYPT_VERIFY_MESSAGE_PARA stVerifyMessagePara;
+	DWORD MessageSizeArray[1];
+	const BYTE *MessageArray[1];
+	
+	PCCERT_CONTEXT pSignerCertContext = NULL;
+
+	*result = 0;
+	
+	// Заполняем структурки аккуратно
+	ZeroMemory(&stVerifyMessagePara, sizeof(CRYPT_VERIFY_MESSAGE_PARA));
+	stVerifyMessagePara.cbSize = sizeof(CRYPT_VERIFY_MESSAGE_PARA);
+	stVerifyMessagePara.dwMsgAndCertEncodingType = X509_ASN_ENCODING | PKCS_7_ASN_ENCODING;
+	stVerifyMessagePara.pfnGetSignerCertificate = NULL;
+	stVerifyMessagePara.pvGetArg = NULL;
+	
+	MessageArray[0] = exstrData->str.ch;
+	MessageSizeArray[0] = exstrData->len;
+
+	LogMessageFormat("%s", exstrSignature->str.ch);
+	LogMessageFormat("%s", exstrData->str.ch);
+	
+	// Проверяем подпись
+	if (CryptVerifyDetachedMessageSignature(&stVerifyMessagePara, 0, exstrSignature->str.ch, exstrSignature->len, 1, MessageArray, MessageSizeArray, &pSignerCertContext)) {
+		LogMessage("Message Signature is OK");
+		commonPrintCertInfo(pSignerCertContext);
+		*result = 1;
+	}
+	else {
+		LogError("Message Signature is INVALID");
+		CACHEEXSTRKILL(exstrData);
+		CACHEEXSTRKILL(exstrSignature);
+		return ZF_FAILURE;
+	}
+
+	CACHEEXSTRKILL(exstrData);
+	CACHEEXSTRKILL(exstrSignature);
+	return ZF_SUCCESS;
+}
+
+*/
 
 ZFBEGIN
 	ZFENTRY("Init", "iiccc", internalInit)
@@ -885,6 +1277,16 @@ ZFBEGIN
 	ZFENTRY("CertGetInfoName", "B", internalCertGetInfoName)
 	ZFENTRY("CertGetInfoNotBefore", "B", internalCertGetInfoNotBefore)
 	ZFENTRY("CertGetInfoNotAfter", "B", internalCertGetInfoNotAfter)
+	
+	
+//	ZFENTRY("SignMessage", "cjJ", internalSignMessage)
+//	ZFENTRY("VerifyMessageSignature", "jjP", internalVerifyMessageSignature)
+	
+
+	ZFENTRY("SignMessage", "scB", internalSignMessage)
+	ZFENTRY("VerifyMessageSignature", "ccP", internalVerifyMessageSignature)
+
+	
 	
 ZFEND
 

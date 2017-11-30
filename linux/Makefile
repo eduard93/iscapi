@@ -3,6 +3,7 @@
 CXX=gcc
 CPCCC=$(CXX)
 
+INSTALL_DIR=/opt/iscapi
 CSP_INCLUDE=/opt/cprocsp/include
 CSP_LIB=/opt/cprocsp/lib/amd64
 ISC_INCLUDE=/opt/isc/ensemble/dev/cpp/include
@@ -19,7 +20,7 @@ LDFLAGS= -L$(CSP_LIB) -lssp -lcapi10 -lcapi20 -lpthread -fPIC -g
 
 #OBJS=iscapi.o
 
-all:	clean iscapi.so #testcapi
+all:	clean iscapi.so install #testcapi
 
 iscapi.so: ISCAPI/common.o ISCAPI/logger.o ISCAPI/iscapi.o
 	$(CPCCC) -shared ISCAPI/common.o ISCAPI/logger.o ISCAPI/iscapi.o $(LDFLAGS) -o $@
@@ -31,6 +32,9 @@ clean:
 	rm -f ISCAPI/*.o
 	rm -f ISCAPITEST/*.o
 	rm -f iscapi.so testcapi
+
+install:
+	cp -f iscapi.so $(INSTALL_DIR)/
 
 ISCAPI/iscapi.o:
 	$(CPCCC) $(CFLAGS) -c -o $@ ISCAPI/dllmain.c 

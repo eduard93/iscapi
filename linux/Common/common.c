@@ -40,6 +40,18 @@ void ByteToZARRAY(int len, unsigned char *buf, ZARRAYP bytestr) {
 
 }
 
+void ByteToEXSTR(int len, Callin_char_t *buf, CACHE_EXSTRP bytestr) {
+    Callin_char_t *p, *q;
+
+    p = buf; 
+    q = bytestr->str.ch; 
+
+    bytestr->len = len;
+    while(len--) *q++ = *p++;
+
+}
+
+
 void ReverseByteToZARRAY(int len, unsigned char *buf, ZARRAYP bytestr) {
     unsigned char *p, *q;
 

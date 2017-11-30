@@ -13,6 +13,16 @@
 #include <WinCryptEx.h>
 #include <stdarg.h>
 
+#include <stdarg.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <CSP_WinDef.h>
+#include <CSP_WinCrypt.h>
+#include "reader/tchar.h"
+
+#include <errno.h>
+#include <locale.h>
+
 
 #include "callin.h"
 #include "cdzf.h"
@@ -48,6 +58,12 @@ wchar_t* ByteToStrW(void* pv);
 void ByteToStr(DWORD cb, void* pv, LPSTR sz);
 void ByteToZARRAY(int len, unsigned char *buf, ZARRAYP bytestr);
 void ReverseByteToZARRAY(int len, unsigned char *buf, ZARRAYP bytestr);
+
+// Long Strings support
+void ByteToEXSTR(int len, Callin_char_t *buf, CACHE_EXSTRP bytestr); 
+
+void commonFree();
+
 // Crypto
 
 //HCRYPTPROV fullAC(DWORD provType);

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="Cache" version="25" zv="Cache for UNIX (Red Hat Enterprise Linux for x86-64) 2016.1 (Build 646U)" ts="2017-08-28 18:18:29">
+<Export generator="Cache" version="25" zv="Cache for UNIX (Red Hat Enterprise Linux for x86-64) 2016.1 (Build 646U)" ts="2017-11-07 12:43:10">
 <Class name="iscapi.CMS">
 <Description>
 Cryptographic Message Syntax через ISCAPI
 TODO: Убрать наследование, вынести методы в Abstract</Description>
 <Super>iscapi.Signer</Super>
-<TimeChanged>64476,48538.730967</TimeChanged>
+<TimeChanged>64579,69144.205343</TimeChanged>
 <TimeCreated>64370,67036.596</TimeCreated>
 
 <Method name="TestDecrypt">
@@ -313,6 +313,121 @@ do ##class(iscapi.CMS).GetStreamHash()</Description>
 	d ..Release()
 	
 	quit hex
+]]></Implementation>
+</Method>
+
+<Method name="SignMessage">
+<Description>
+Создание откреплённой подписи.
+certCN = CN сертификата из контейнера, который будет использоваться для подписи.
+В контейнере должен иметься приватный ключ, соответствующий сертификату.
+Возвращаем строку с подписью (надеемся уложиться в 32К)</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>certCN:%String,dataFileName:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "SignMessage", certCN, dataFileName)
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="VerifyMessageSignature">
+<Description>
+Проверка откреплённой подписи.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>dataFileName:%String,signatureFileName:%String</FormalSpec>
+<ReturnType>%Boolean</ReturnType>
+<Implementation><![CDATA[
+	s result = ""
+	try {
+		s result = $zf(-3, "", "VerifyMessageSignature", dataFileName, signatureFileName)
+	}
+	catch ex {
+		s result = ""
+	}
+	q result
+]]></Implementation>
+</Method>
+
+<Method name="CMSSignTest">
+<Description>
+Тестирование создания и проверки откреплённой подписи.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>removeFilesAfterTest:%Boolean=1,iterCount:%Integer=1</FormalSpec>
+<Implementation><![CDATA[
+	// Инициализируем провайдер и открываем контейнер.
+	s sc = ..LoadDLL("/opt/iscapi/iscapi.so")
+	d ..InitLogger("/tmp/iscapiCMS-S-24.log", 2, 3)
+	d ..Init(75, 32798, "\\.\HDIMAGE\CMS-Sign-01", "111111", "Crypto-Pro GOST R 34.10-2001 Cryptographic Service Provider")
+	
+	// Файл для тестирования
+	#dim file As %FileBinaryStream
+
+	w "Cycles = ", iterCount, !
+	for i=1:1:iterCount {
+		w "Iteration #", i, !
+		w "------------", !
+		
+		s fileName = ..CreateTestFile(.file)
+		s sigFileName = $replace(fileName, ".sigDAT", ".sigVAL")
+		w "Тестовый файл: ", fileName, !
+		w "Файл подписи : ", sigFileName, !
+		
+		// Вычисление подписи
+		// Указываем CN сертификата из инициализированного контейнера
+		//s signature = ..SignMessage("CMS-Sign-01", fileName)
+		
+		//d ..Release()
+		//q
+		
+		// Запись подписи в файл
+		s sigFile = ##class(%FileBinaryStream).%New()
+		s sigFile.Filename = sigFileName
+		d sigFile.Write(signature)
+		d sigFile.%Save()
+		w "Подпись вычислена и сохранена", !
+			
+		// Проверка подписи
+		d file.Rewind()
+		d sigFile.Rewind()
+		s result = ..VerifyMessageSignature(fileName, sigFileName)
+		w "Проверка подписи = ", result, !
+		
+		if (removeFilesAfterTest) {
+			w "Удаление тестовых файлов: "
+			w "DAT: ", ##class(%File).Delete(fileName), " "
+			w "VAL: ", ##class(%File).Delete(sigFileName), !
+		}
+	}
+	
+	d ..Release()
+]]></Implementation>
+</Method>
+
+<Method name="CreateTestFile">
+<Description>
+Создание временных тестовых файликов для подписи.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[&file:%FileBinaryStream,size=1024*128]]></FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	s file = ##class(%FileBinaryStream).%New()
+	s header = "CMS Signature Test"
+	s file.Filename = ##class(%File).TempFilename("sigDAT")
+	d file.Write(header)
+	f i=1:1:size-$l(header) {
+		 d file.Write($c($r(254)))
+	}
+	d file.Flush()
+	d file.%Save()
+	
+	q file.Filename
 ]]></Implementation>
 </Method>
 </Class>
